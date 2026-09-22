@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Conferência de NF-e — Just Burger</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f5f5f5; color: #222; }
+  header { background: #1f2937; color: white; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+  main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  .oculto { display: none; }
+  .cartao { background: white; border-radius: 10px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,.1); margin-bottom: 20px; }
+  input[type=email], input[type=password] { width: 100%; padding: 10px; margin: 6px 0 14px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+  button { background: #2563eb; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  button:hover { background: #1d4ed8; }
+  #login-erro { color: #dc2626; font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; }
+  th { background: #f3f4f6; }
+  .linha-revisar { background: #fef2f2; }
+  .linha-ok { background: white; }
+  #input-xml { margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h2>Conferência de NF-e — Just Burger</h2>
+  <div id="app-view" class="oculto">
+    <span id="usuario-label" style="margin-right:12px;"></span>
+    <button id="btn-sair">Sair</button>
+  </div>
+</header>
+
+<main>
+  <section id="login-view" class="cartao">
+    <h3>Entrar</h3>
+    <form id="login-form">
+      <label>E-mail</label>
+      <input type="email" id="login-email" required />
+      <label>Senha</label>
+      <input type="password" id="login-senha" required />
+      <button type="submit">Entrar</button>
+      <p id="login-erro"></p>
+    </form>
+  </section>
+
+  <section id="app-view" class="oculto">
+    <div class="cartao">
+      <h3>Enviar XML(s) de notas de entrada</h3>
+      <input type="file" id="input-xml" accept=".xml" multiple />
+      <p style="color:#666; font-size:13px;">
+        Pode selecionar vários arquivos de uma vez. Cada item da nota é classificado
+        automaticamente e o CST de PIS/COFINS é conferido.
+      </p>
+    </div>
+
+    <div class="cartao">
+      <h3>Notas processadas</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Nº Nota</th><th>Emitente</th><th>Item</th><th>CFOP</th>
+            <th>Classificação</th><th>CST PIS</th><th>CST COFINS</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="tabela-corpo"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
