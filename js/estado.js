@@ -5,7 +5,7 @@ import { db, collection, doc } from "./firebase-init.js";
 // Pode trocar o nome/ramo à vontade; NÃO mude o id depois que houver dados.
 export const EMPRESAS = [
   { id: "just-burger", nome: "Just Burger", ramo: "Hamburgueria" },
-  { id: "industria", nome: "Indústria alimentícia", ramo: "Indústria" },
+  { id: "maestro", nome: "Maestro", ramo: "Indústria alimentícia" },
 ];
 
 export const estado = {
