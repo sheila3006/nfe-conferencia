@@ -1,8 +1,6 @@
 // firebase-init.js
-// Preencha com as credenciais do SEU projeto Firebase
-// (Console Firebase > Configurações do projeto > Seus apps > SDK config).
-// Essas chaves NÃO são secretas por natureza (são de identificação do app),
-// mas quem controla o acesso real são as regras do Firestore + Auth.
+// As chaves abaixo identificam o app (não são secretas); quem protege os dados
+// são as regras do Firestore + Auth.
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
@@ -14,8 +12,11 @@ import {
 import {
   getFirestore,
   collection,
-  addDoc,
+  doc,
+  setDoc,
+  getDoc,
   getDocs,
+  updateDoc,
   query,
   orderBy,
   serverTimestamp,
@@ -35,15 +36,8 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 export {
-  auth,
-  db,
-  signInWithEmailAndPassword,
-  onAuthStateChanged,
-  signOut,
-  collection,
-  addDoc,
-  getDocs,
-  query,
-  orderBy,
-  serverTimestamp,
+  auth, db,
+  signInWithEmailAndPassword, onAuthStateChanged, signOut,
+  collection, doc, setDoc, getDoc, getDocs, updateDoc,
+  query, orderBy, serverTimestamp,
 };
