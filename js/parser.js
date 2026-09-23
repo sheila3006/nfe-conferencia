@@ -2,20 +2,15 @@
 // Extrai os campos relevantes de um XML de NF-e (modelo 55, versão 4.00).
 
 function texto(el, tag) {
+  if (!el) return "";
   const node = el.getElementsByTagName(tag)[0];
   return node ? node.textContent.trim() : "";
 }
 
-/**
- * Recebe o texto bruto do XML e devolve um objeto estruturado
- * com os dados da nota e a lista de itens.
- */
 function parseNFeXml(xmlString) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xmlString, "application/xml");
+  const doc = new DOMParser().parseFromString(xmlString, "application/xml");
 
-  const erro = doc.getElementsByTagName("parsererror")[0];
-  if (erro) {
+  if (doc.getElementsByTagName("parsererror")[0]) {
     throw new Error("XML inválido ou corrompido.");
   }
 
@@ -26,24 +21,17 @@ function parseNFeXml(xmlString) {
 
   const ide = infNFe.getElementsByTagName("ide")[0];
   const emit = infNFe.getElementsByTagName("emit")[0];
-  const dest = infNFe.getElementsByTagName("dest")[0];
-
-  const chaveAcesso = (infNFe.getAttribute("Id") || "").replace("NFe", "");
 
   const nota = {
-    chaveAcesso,
+    chaveAcesso: (infNFe.getAttribute("Id") || "").replace("NFe", ""),
     numero: texto(ide, "nNF"),
     serie: texto(ide, "serie"),
-    dataEmissao: texto(ide, "dhEmi"),
-    naturezaOperacao: texto(ide, "natOp"),
+    dataEmissao: texto(ide, "dhEmi") || texto(ide, "dEmi"),
+    valorTotal: parseFloat(texto(infNFe, "vNF") || "0"),
     emitente: {
-      cnpj: texto(emit, "CNPJ"),
+      cnpj: texto(emit, "CNPJ") || texto(emit, "CPF"),
       nome: texto(emit, "xNome"),
-      crt: texto(emit, "CRT"), // 1=Simples, 3=Normal, 4=MEI/outros
-    },
-    destinatario: {
-      cnpj: texto(dest, "CNPJ"),
-      nome: texto(dest, "xNome"),
+      crt: texto(emit, "CRT"), // 1=Simples, 2=Simples excesso, 3=Normal, 4=MEI
     },
     itens: [],
   };
@@ -53,22 +41,18 @@ function parseNFeXml(xmlString) {
     const det = dets[i];
     const prod = det.getElementsByTagName("prod")[0];
     const imposto = det.getElementsByTagName("imposto")[0];
-
-    // CST de PIS: pode vir dentro de várias tags filhas (PISAliq, PISOutr, PISNT, PISST, PISQtde)
     const pisEl = imposto ? imposto.getElementsByTagName("PIS")[0] : null;
     const cofinsEl = imposto ? imposto.getElementsByTagName("COFINS")[0] : null;
-    const cstPis = pisEl ? texto(pisEl, "CST") : "";
-    const cstCofins = cofinsEl ? texto(cofinsEl, "CST") : "";
 
     nota.itens.push({
-      numeroItem: det.getAttribute("nItem"),
+      numeroItem: det.getAttribute("nItem") || String(i + 1),
       codigoProduto: texto(prod, "cProd"),
       descricao: texto(prod, "xProd"),
       ncm: texto(prod, "NCM"),
       cfop: texto(prod, "CFOP"),
       valorProduto: parseFloat(texto(prod, "vProd") || "0"),
-      cstPis,
-      cstCofins,
+      cstPis: texto(pisEl, "CST"),
+      cstCofins: texto(cofinsEl, "CST"),
     });
   }
 
