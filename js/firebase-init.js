@@ -4,22 +4,12 @@
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
-  getAuth,
-  signInWithEmailAndPassword,
-  onAuthStateChanged,
-  signOut,
+  getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
+  createUserWithEmailAndPassword, sendPasswordResetEmail,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore,
-  collection,
-  doc,
-  setDoc,
-  getDoc,
-  getDocs,
-  updateDoc,
-  query,
-  orderBy,
-  serverTimestamp,
+  getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc,
+  query, orderBy, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -35,9 +25,18 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
+// Segunda instância usada só para cadastrar usuários novos sem derrubar
+// o login do administrador que está logado.
+const authCadastro = getAuth(initializeApp(firebaseConfig, "cadastro-usuarios"));
+async function criarLogin(email, senha) {
+  const cred = await createUserWithEmailAndPassword(authCadastro, email, senha);
+  await signOut(authCadastro);
+  return cred.user.uid;
+}
+
 export {
-  auth, db,
-  signInWithEmailAndPassword, onAuthStateChanged, signOut,
-  collection, doc, setDoc, getDoc, getDocs, updateDoc,
+  auth, db, criarLogin,
+  signInWithEmailAndPassword, onAuthStateChanged, signOut, sendPasswordResetEmail,
+  collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc,
   query, orderBy, serverTimestamp,
 };
