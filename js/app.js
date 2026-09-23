@@ -8,6 +8,7 @@ import { classificarPorCfop, ehProvavelInsumoProducao, conferirCstPisCofins } fr
 
 const loginView = document.getElementById("login-view");
 const appView = document.getElementById("app-view");
+const userInfo = document.getElementById("user-info");
 const loginForm = document.getElementById("login-form");
 const loginErro = document.getElementById("login-erro");
 const btnSair = document.getElementById("btn-sair");
@@ -19,10 +20,12 @@ onAuthStateChanged(auth, (user) => {
   if (user) {
     loginView.classList.add("oculto");
     appView.classList.remove("oculto");
+    userInfo.classList.remove("oculto");
     usuarioLabel.textContent = user.email;
     carregarNotas();
   } else {
     appView.classList.add("oculto");
+    userInfo.classList.add("oculto");
     loginView.classList.remove("oculto");
   }
 });
