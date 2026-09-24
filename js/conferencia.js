@@ -13,7 +13,12 @@ export function iniciarConferencia() {
     raiz: $("conf-lista"),
     paginacao: $("conf-paginacao"),
     vazio: "Nenhuma nota importada nesta sessão. Envie os XMLs acima para começar.",
-    obter: () => estado.notas.filter((n) => estado.sessao.has(n.id) && passaBusca(n)),
+    porFornecedor: true,
+    obter: () => estado.notas
+      .filter((n) => estado.sessao.has(n.id) && passaBusca(n))
+      .sort((a, b) =>
+        (a.emitenteNome || "").localeCompare(b.emitenteNome || "", "pt-BR") ||
+        (Number(a.numero) || 0) - (Number(b.numero) || 0)),
   });
   $("input-xml").addEventListener("change", importar);
   $("btn-pdf-conf").addEventListener("click", () => {
