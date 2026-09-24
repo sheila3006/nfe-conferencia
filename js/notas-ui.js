@@ -4,7 +4,7 @@ import { getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp } from "./firebas
 import { CLASSIFICACOES, CST_ENTRADA, cfopEntradaSugerido, cstEntradaSugerido, chaveProduto } from "./regras.js";
 import { gerarXmlAjustado, gerarPdf, baixarArquivo } from "./exportacao.js";
 import {
-  estado, ehAdmin, docEmpresa, esc, moeda, competenciaDe, rotuloCompetencia, valorNota, ICONES,
+  estado, ehAdmin, docEmpresa, esc, moeda, formatarCnpj, competenciaDe, rotuloCompetencia, valorNota, ICONES,
 } from "./estado.js";
 
 const POR_PAGINA = 20;
@@ -68,6 +68,27 @@ function htmlNota(n, abertas) {
   </details>`;
 }
 
+// Agrupa as notas da página por fornecedor: caixa do fornecedor > caixas das notas > itens
+function htmlPorFornecedor(notas, abertas, fornAberto, prefixo = "") {
+  const grupos = new Map();
+  for (const n of notas) {
+    const chave = n.emitenteCnpj || n.emitenteNome;
+    if (!grupos.has(chave)) grupos.set(chave, []);
+    grupos.get(chave).push(n);
+  }
+  return [...grupos].map(([chave, lista]) => {
+    const pendentes = lista.reduce((s, n) => s + n.itens.filter((i) => !i.revisado).length, 0);
+    const total = lista.reduce((s, n) => s + valorNota(n), 0);
+    return `<details class="fornecedor" data-forn="${esc(prefixo + chave)}" ${fornAberto(prefixo + chave) ? "open" : ""}>
+      <summary>
+        <span class="forn-titulo"><b>${esc(lista[0].emitenteNome)}</b><small>${esc(formatarCnpj(lista[0].emitenteCnpj))}</small></span>
+        <span class="nota-meta">${lista.length} ${lista.length === 1 ? "nota" : "notas"} · ${moeda(total)} · ${pendentes} item(ns) a revisar</span>
+      </summary>
+      <div class="forn-notas">${lista.map((n) => htmlNota(n, abertas)).join("")}</div>
+    </details>`;
+  }).join("");
+}
+
 function marcarAlterada(nota, det) {
   nota.sujo = true;
   nota.status = "pendente";
@@ -118,10 +139,13 @@ async function excluirNota(nota) {
  * Cria uma lista paginada (20 notas por página) dentro de `raiz`.
  * obter(): devolve as notas já filtradas/ordenadas. agrupar: título por competência.
  */
-export function criarLista({ raiz, paginacao, obter, vazio, agrupar = false }) {
+export function criarLista({ raiz, paginacao, obter, vazio, agrupar = false, porFornecedor = false, fornecedoresAbertos = true }) {
   let pagina = 0;
   let visiveis = [];
-  const abertas = new Set();
+  const abertas = new Set();   // notas com a caixa aberta
+  // fornecedores que você abriu/fechou em relação ao padrão (aberto na Conferência, fechado nos arquivados)
+  const fornAlterados = new Set();
+  const fornAberto = (chave) => fornecedoresAbertos !== fornAlterados.has(chave);
   const acharNota = (el) => estado.notas.find((n) => n.id === el.closest("details").dataset.id);
 
   function render(zerar = false) {
@@ -133,7 +157,21 @@ export function criarLista({ raiz, paginacao, obter, vazio, agrupar = false }) {
 
     let html = "";
     let comp = null;
-    for (const n of visiveis) {
+    const cabecalho = (c) => {
+      const doMes = lista.filter((x) => competenciaDe(x) === c);
+      return `<h4 class="grupo">${rotuloCompetencia(c)} <small>${doMes.length} XML(s) · ${moeda(doMes.reduce((s, x) => s + valorNota(x), 0))}</small></h4>`;
+    };
+    if (porFornecedor && agrupar) {
+      // competência > fornecedor > nota (visiveis já vem ordenado por competência)
+      const porComp = new Map();
+      for (const n of visiveis) {
+        const c = competenciaDe(n);
+        if (!porComp.has(c)) porComp.set(c, []);
+        porComp.get(c).push(n);
+      }
+      for (const [c, doMes] of porComp) html += cabecalho(c) + htmlPorFornecedor(doMes, abertas, fornAberto, c + "|");
+    } else if (porFornecedor) html = htmlPorFornecedor(visiveis, abertas, fornAberto);
+    else for (const n of visiveis) {
       if (agrupar && competenciaDe(n) !== comp) {
         comp = competenciaDe(n);
         const doMes = lista.filter((x) => competenciaDe(x) === comp);
@@ -146,6 +184,12 @@ export function criarLista({ raiz, paginacao, obter, vazio, agrupar = false }) {
       <button data-pag="-1" class="sec" ${pagina === 0 ? "disabled" : ""}>Anterior</button>
       <span>Página ${pagina + 1} de ${totalPag} · ${lista.length} nota(s)</span>
       <button data-pag="1" class="sec" ${pagina >= totalPag - 1 ? "disabled" : ""}>Próxima</button>`;
+  }
+
+  // com fornecedores agrupados, redesenha a lista toda para atualizar os totais do fornecedor
+  function atualizarNota(nota) {
+    if (porFornecedor) render();
+    else renderNota(nota);
   }
 
   function renderNota(nota) {
@@ -164,8 +208,9 @@ export function criarLista({ raiz, paginacao, obter, vazio, agrupar = false }) {
   // lembra quais caixas estão abertas ("toggle" não borbulha, por isso captura)
   raiz.addEventListener("toggle", (e) => {
     const d = e.target;
-    if (!d.matches || !d.matches("details.nota")) return;
-    d.open ? abertas.add(d.dataset.id) : abertas.delete(d.dataset.id);
+    if (!d.matches) return;
+    if (d.matches("details.nota")) d.open ? abertas.add(d.dataset.id) : abertas.delete(d.dataset.id);
+    else if (d.matches("details.fornecedor")) d.open === fornecedoresAbertos ? fornAlterados.delete(d.dataset.forn) : fornAlterados.add(d.dataset.forn);
   }, true);
 
   raiz.addEventListener("change", (e) => {
@@ -188,7 +233,7 @@ export function criarLista({ raiz, paginacao, obter, vazio, agrupar = false }) {
       item.cstPis = item.cstCofins = cst.cst;
       item.motivo = cst.motivo;
       marcarAlterada(nota, det);
-      renderNota(nota);
+      atualizarNota(nota);
       return;
     }
 
@@ -210,13 +255,13 @@ export function criarLista({ raiz, paginacao, obter, vazio, agrupar = false }) {
     btn.disabled = true;
     try {
       const acao = btn.dataset.acao;
-      if (acao === "salvar") { await salvarRevisao(nota); renderNota(nota); }
+      if (acao === "salvar") { await salvarRevisao(nota); atualizarNota(nota); }
       else if (acao === "xml") await gerarXml(nota);
       else if (acao === "excluir") { if (await excluirNota(nota)) render(); }
       else gerarPdf([nota], `analise-nf-${nota.numero}.pdf`, `Análise de NF-e - ${estado.empresa.nome}`);
     } catch (err) {
       alert("Erro: " + err.message);
-      if (btn.dataset.acao === "salvar") { abertas.add(nota.id); renderNota(nota); }
+      if (btn.dataset.acao === "salvar") { abertas.add(nota.id); atualizarNota(nota); }
     } finally {
       btn.disabled = false;
     }
