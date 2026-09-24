@@ -10,13 +10,18 @@ export function iniciarArquivados() {
     raiz: $("arq-lista"),
     paginacao: $("arq-paginacao"),
     agrupar: true,
+    porFornecedor: true,
+    fornecedoresAbertos: false,
     vazio: "Nenhuma nota encontrada para este filtro.",
     obter: () => {
       const comp = $("arq-competencia").value;
       const st = $("arq-status").value;
       return estado.notas
         .filter((n) => (!comp || competenciaDe(n) === comp) && (st === "todas" || n.status === st) && passaBusca(n))
-        .sort((a, b) => competenciaDe(b).localeCompare(competenciaDe(a)));
+        .sort((a, b) =>
+          competenciaDe(b).localeCompare(competenciaDe(a)) ||
+          (a.emitenteNome || "").localeCompare(b.emitenteNome || "", "pt-BR") ||
+          (Number(a.numero) || 0) - (Number(b.numero) || 0));
     },
   });
   $("arq-competencia").addEventListener("change", () => lista.render(true));
