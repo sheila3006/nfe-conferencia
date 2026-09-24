@@ -8,6 +8,7 @@ import { iniciarConferencia, renderConferencia } from "./conferencia.js";
 import { iniciarArquivados, renderArquivados } from "./arquivados.js";
 import { iniciarDashboard, renderDashboard } from "./dashboard.js";
 import { iniciarUsuarios, renderUsuarios } from "./usuarios.js";
+import { iniciarAnalista, renderAnalista } from "./analista.js";
 
 const VISOES = ["login-view", "sem-acesso-view", "empresa-view", "shell"];
 const mostrar = (id) => VISOES.forEach((v) => $(v).classList.toggle("oculto", v !== id));
@@ -17,6 +18,7 @@ iniciarConferencia();
 iniciarArquivados();
 iniciarDashboard();
 iniciarUsuarios();
+iniciarAnalista();
 
 // ---------- login ----------
 $("login-form").addEventListener("submit", async (e) => {
@@ -106,7 +108,7 @@ async function entrarNaEmpresa(emp) {
 
 // ---------- navegação ----------
 let telaAtual = "conferencia";
-const RENDERS = { conferencia: renderConferencia, arquivados: renderArquivados, dashboard: renderDashboard, configuracoes: renderUsuarios };
+const RENDERS = { conferencia: renderConferencia, arquivados: renderArquivados, dashboard: renderDashboard, analista: renderAnalista, configuracoes: renderUsuarios };
 
 function renderTelaAtual(zerar = false) { RENDERS[telaAtual](zerar); }
 
