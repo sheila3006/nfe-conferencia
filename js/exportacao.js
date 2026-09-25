@@ -1,4 +1,6 @@
-// exportacao.js — XML ajustado e PDF de análise.
+// exportacao.js — XML ajustado, PDF de análise e download em lote (.zip).
+import { getDoc } from "./firebase-init.js";
+import { docEmpresa } from "./estado.js";
 
 export function baixarArquivo(conteudo, nome, tipo) {
   const url = URL.createObjectURL(new Blob([conteudo], { type: tipo }));
@@ -77,4 +79,41 @@ export function gerarPdf(notas, nomeArquivo, titulo = "Análise de NF-e") {
   });
 
   pdf.save(nomeArquivo);
+}
+
+// Baixa, num único .zip, o XML ajustado (com CFOP/CST revisados) de todas as notas
+// informadas — evita ter que clicar "Gerar XML" nota por nota.
+export async function gerarZipXmls(notas, nomeArquivo, onProgresso) {
+  if (typeof JSZip === "undefined") throw new Error("A biblioteca de compactação não carregou. Verifique a internet e recarregue a página.");
+  const zip = new JSZip();
+  const usados = new Set();
+  const falhas = [];
+
+  for (let i = 0; i < notas.length; i++) {
+    const n = notas[i];
+    onProgresso?.(i + 1, notas.length);
+    try {
+      const snap = await getDoc(docEmpresa("xmls", n.id));
+      if (!snap.exists()) { falhas.push(`NF ${n.numero}: XML original não encontrado.`); continue; }
+      const xml = gerarXmlAjustado(snap.data().xml, n.itens);
+      let nome = `${n.chaveAcesso || n.numero}-ajustado.xml`;
+      if (usados.has(nome)) nome = `${n.chaveAcesso || n.numero}-${n.id}-ajustado.xml`;
+      usados.add(nome);
+      zip.file(nome, xml);
+    } catch (err) {
+      falhas.push(`NF ${n.numero}: ${err.message}`);
+    }
+  }
+
+  if (!usados.size) throw new Error("Nenhum XML pôde ser preparado" + (falhas.length ? ": " + falhas[0] : "."));
+
+  const blob = await zip.generateAsync({ type: "blob" });
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement("a"), { href: url, download: nomeArquivo });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+  if (falhas.length) alert(`${usados.size} XML(s) baixado(s). Alguns ficaram de fora:\n` + falhas.join("\n"));
 }
