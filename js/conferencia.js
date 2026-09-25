@@ -19,6 +19,7 @@ export function iniciarConferencia() {
       .sort((a, b) =>
         (a.emitenteNome || "").localeCompare(b.emitenteNome || "", "pt-BR") ||
         (Number(a.numero) || 0) - (Number(b.numero) || 0)),
+    zipNomeSelecionados: "xmls-nfe-conferencia-selecionados.zip",
   });
   $("input-xml").addEventListener("change", importar);
   $("btn-pdf-conf").addEventListener("click", () => {
