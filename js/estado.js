@@ -5,7 +5,7 @@ import { db, collection, doc } from "./firebase-init.js";
 // Pode trocar o nome/ramo à vontade; NÃO mude o id depois que houver dados.
 export const EMPRESAS = [
   { id: "just-burger", nome: "Just Burger", ramo: "Hamburgueria" },
-  { id: "maestro", nome: "Maestro", ramo: "Indústria alimentícia" },
+  { id: "industria", nome: "Indústria alimentícia", ramo: "Indústria" },
 ];
 
 export const estado = {
@@ -35,6 +35,17 @@ export const formatarCnpj = (c) => {
 export const competenciaDe = (n) => (n.dataEmissao || "").slice(0, 7);
 export const rotuloCompetencia = (c) => (c ? c.split("-").reverse().join("/") : "Sem data");
 export const valorNota = (n) => n.valorTotal || (n.itens || []).reduce((s, i) => s + (i.valorProduto || 0), 0);
+
+// Unidades (matriz/filiais) presentes nas notas, pelo CNPJ do destinatário (quem recebeu a NF-e).
+export const rotuloUnidade = (n) => (n.destNome ? `${n.destNome} — ${formatarCnpj(n.destCnpj)}` : formatarCnpj(n.destCnpj) || "CNPJ não identificado");
+export function unidadesDe(notas) {
+  const mapa = new Map();
+  for (const n of notas) {
+    if (!n.destCnpj) continue;
+    if (!mapa.has(n.destCnpj)) mapa.set(n.destCnpj, { cnpj: n.destCnpj, nome: n.destNome || "" });
+  }
+  return [...mapa.values()].sort((a, b) => (a.nome || a.cnpj).localeCompare(b.nome || b.cnpj, "pt-BR"));
+}
 
 // Busca do topo: número da NF, CNPJ ou fornecedor
 export function passaBusca(n) {
