@@ -30,7 +30,7 @@ $("login-form").addEventListener("submit", async (e) => {
     $("login-erro").textContent = "Não foi possível entrar: e-mail ou senha incorretos.";
   }
 });
-document.querySelectorAll("[data-sair]").forEach((b) => b.addEventListener("click", () => signOut(auth)));
+document.querySelectorAll("[data-sair]").forEach((b) => b.addEventListener("click", () => { if (podeSairDaConferencia()) signOut(auth); }));
 
 const empresasPermitidas = () => ehAdmin()
   ? EMPRESAS
@@ -84,7 +84,7 @@ $("empresa-cards").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-id]");
   if (b) entrarNaEmpresa(EMPRESAS.find((x) => x.id === b.dataset.id));
 });
-$("btn-trocar-empresa").addEventListener("click", () => escolherEmpresa(empresasPermitidas()));
+$("btn-trocar-empresa").addEventListener("click", () => { if (podeSairDaConferencia()) escolherEmpresa(empresasPermitidas()); });
 
 async function entrarNaEmpresa(emp) {
   estado.empresa = emp;
@@ -112,7 +112,17 @@ const RENDERS = { conferencia: renderConferencia, arquivados: renderArquivados, 
 
 function renderTelaAtual(zerar = false) { RENDERS[telaAtual](zerar); }
 
+// Se está na Conferência e há notas desta sessão ainda não revisadas, confirma antes de sair
+// (elas continuam salvas no banco, mas ficam pendentes até alguém revisar).
+function podeSairDaConferencia() {
+  if (telaAtual !== "conferencia") return true;
+  const pendentes = estado.notas.filter((n) => estado.sessao.has(n.id) && n.status !== "revisada").length;
+  if (!pendentes) return true;
+  return confirm(`Há ${pendentes} nota(s) importada(s) nesta sessão ainda não revisada(s). Elas continuam salvas, mas ficam pendentes até você revisar. Sair mesmo assim?`);
+}
+
 function irPara(tela) {
+  if (tela !== telaAtual && !podeSairDaConferencia()) return;
   telaAtual = tela;
   document.querySelectorAll(".tela").forEach((s) => s.classList.toggle("oculto", s.id !== "tela-" + tela));
   document.querySelectorAll("nav button[data-tela]").forEach((b) => b.classList.toggle("ativo", b.dataset.tela === tela));
