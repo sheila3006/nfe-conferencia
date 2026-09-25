@@ -21,6 +21,7 @@ function parseNFeXml(xmlString) {
 
   const ide = infNFe.getElementsByTagName("ide")[0];
   const emit = infNFe.getElementsByTagName("emit")[0];
+  const dest = infNFe.getElementsByTagName("dest")[0];
 
   const nota = {
     chaveAcesso: (infNFe.getAttribute("Id") || "").replace("NFe", ""),
@@ -32,6 +33,12 @@ function parseNFeXml(xmlString) {
       cnpj: texto(emit, "CNPJ") || texto(emit, "CPF"),
       nome: texto(emit, "xNome"),
       crt: texto(emit, "CRT"), // 1=Simples, 2=Simples excesso, 3=Normal, 4=MEI
+    },
+    // Destinatário = a própria empresa que recebeu a nota (matriz ou filial).
+    // Serve para separar as notas por unidade/CNPJ dentro da mesma empresa do app.
+    destinatario: {
+      cnpj: texto(dest, "CNPJ") || texto(dest, "CPF"),
+      nome: texto(dest, "xNome"),
     },
     itens: [],
   };
