@@ -49,7 +49,7 @@ function htmlNota(n, abertas) {
   return `<details class="nota" data-id="${esc(n.id)}" ${abertas.has(n.id) ? "open" : ""}>
     <summary>
       <span class="nota-titulo"><b>NF ${esc(n.numero)}</b> — ${esc(n.emitenteNome)}</span>
-      <span class="nota-meta">${rotuloCompetencia(competenciaDe(n))} · ${qtd} ${qtd === 1 ? "item" : "itens"} · ${moeda(valorNota(n))} · ${pendentes} a revisar</span>
+      <span class="nota-meta">${n.destNome ? `${esc(n.destNome)} · ` : ""}${rotuloCompetencia(competenciaDe(n))} · ${qtd} ${qtd === 1 ? "item" : "itens"} · ${moeda(valorNota(n))} · ${pendentes} a revisar</span>
       <span class="badge ${n.status}">${n.status === "revisada" ? "Revisada" : "Pendente"}</span>
       <span class="acoes">
         <button data-acao="salvar" class="btn-salvar ${n.sujo ? "destaque" : ""}">Salvar revisão</button>
