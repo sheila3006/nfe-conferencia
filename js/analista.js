@@ -1,5 +1,5 @@
 // analista.js — Analista: confere as notas revisadas no app contra a planilha exportada do seu sistema.
-import { estado, $, esc, moeda, formatarCnpj, competenciaDe, rotuloCompetencia } from "./estado.js";
+import { estado, $, esc, moeda, formatarCnpj, competenciaDe, rotuloCompetencia, unidadesDe } from "./estado.js";
 import { CAMPOS, detectarCabecalho, sugerirMapa, compararLote, parseCsv } from "./analise.js";
 
 const ROTULO_CAMPO = { cfop: "CFOP", cstPis: "CST PIS", cstCofins: "CST COFINS", valor: "Valor do item" };
@@ -19,6 +19,7 @@ const decodificar = (buf) => {
 
 export function iniciarAnalista() {
   $("an-origem").addEventListener("change", atualizarContagem);
+  $("an-unidade").addEventListener("change", atualizarContagem);
   $("an-so-revisadas").addEventListener("change", atualizarContagem);
   $("an-arquivo").addEventListener("change", lerArquivo);
   $("an-aba").addEventListener("change", () => escolherAba($("an-aba").value));
@@ -50,21 +51,33 @@ export function renderAnalista() {
     comps.map((c) => `<option value="${c}">Competência ${rotuloCompetencia(c)} (${estado.notas.filter((n) => competenciaDe(n) === c).length} notas)</option>`).join("");
   const existe = [...sel.options].some((o) => o.value === anterior);
   sel.value = existe ? anterior : (estado.sessao.size || !comps.length ? "sessao" : comps[0]);
+
+  const selU = $("an-unidade");
+  const anteriorU = selU.value;
+  const unidades = unidadesDe(estado.notas);
+  selU.innerHTML = '<option value="">Todas as unidades</option>' +
+    unidades.map((u) => `<option value="${esc(u.cnpj)}">${esc(u.nome || formatarCnpj(u.cnpj))} (${esc(formatarCnpj(u.cnpj))})</option>`).join("");
+  selU.value = unidades.some((u) => u.cnpj === anteriorU) ? anteriorU : "";
+
   atualizarContagem();
 }
 
 // ---------- 1) notas do app ----------
 function notasSelecionadas() {
   const origem = $("an-origem").value;
+  const uni = $("an-unidade").value;
   const lista = origem === "sessao"
     ? estado.notas.filter((n) => estado.sessao.has(n.id))
     : estado.notas.filter((n) => competenciaDe(n) === origem);
-  return $("an-so-revisadas").checked ? lista.filter((n) => n.status === "revisada") : lista;
+  const filtrada = uni ? lista.filter((n) => n.destCnpj === uni) : lista;
+  return $("an-so-revisadas").checked ? filtrada.filter((n) => n.status === "revisada") : filtrada;
 }
 
 function atualizarContagem() {
   const origem = $("an-origem").value;
-  const todas = origem === "sessao" ? estado.notas.filter((n) => estado.sessao.has(n.id)) : estado.notas.filter((n) => competenciaDe(n) === origem);
+  const uni = $("an-unidade").value;
+  let todas = origem === "sessao" ? estado.notas.filter((n) => estado.sessao.has(n.id)) : estado.notas.filter((n) => competenciaDe(n) === origem);
+  if (uni) todas = todas.filter((n) => n.destCnpj === uni);
   const sel = notasSelecionadas();
   const itens = sel.reduce((s, n) => s + n.itens.length, 0);
   const fora = todas.length - sel.length;
