@@ -2,7 +2,7 @@
 import { getDoc, setDoc, serverTimestamp } from "./firebase-init.js";
 import { parseNFeXml } from "./parser.js";
 import { classificarItem, cfopEntradaSugerido, cstEntradaSugerido, chaveProduto } from "./regras.js";
-import { gerarPdf } from "./exportacao.js";
+import { gerarPdf, gerarZipXmls } from "./exportacao.js";
 import { criarLista } from "./notas-ui.js";
 import { estado, docEmpresa, $, passaBusca } from "./estado.js";
 
@@ -25,6 +25,21 @@ export function iniciarConferencia() {
     const v = lista.visiveis();
     if (!v.length) return alert("Não há notas na página para gerar o PDF.");
     gerarPdf(v, "analise-nfe-conferencia.pdf", `Análise de NF-e - ${estado.empresa.nome}`);
+  });
+  $("btn-zip-conf").addEventListener("click", async () => {
+    const v = lista.visiveis();
+    if (!v.length) return alert("Não há notas na página para baixar.");
+    const btn = $("btn-zip-conf");
+    const textoOriginal = btn.textContent;
+    btn.disabled = true;
+    try {
+      await gerarZipXmls(v, "xmls-nfe-conferencia.zip", (feito, total) => { btn.textContent = `Baixando ${feito}/${total}...`; });
+    } catch (err) {
+      alert("Não foi possível gerar o arquivo .zip: " + err.message);
+    } finally {
+      btn.textContent = textoOriginal;
+      btn.disabled = false;
+    }
   });
 }
 
@@ -65,6 +80,7 @@ async function importar(e) {
   const status = $("status-import");
   const arquivos = Array.from(e.target.files || []);
   const avisos = [];
+  let primeiroDestCnpj = null; // usado para avisar se o envio misturar unidades (CNPJ) diferentes
 
   for (let n = 0; n < arquivos.length; n++) {
     const arq = arquivos[n];
@@ -74,6 +90,14 @@ async function importar(e) {
       if (new Blob([xml]).size > 900000) throw new Error("XML maior que 900 KB (limite do Firestore).");
       const nota = parseNFeXml(xml);
       const id = nota.chaveAcesso || `${nota.emitente.cnpj}_${nota.numero}`;
+      const destCnpj = nota.destinatario?.cnpj || "";
+
+      if (destCnpj) {
+        if (primeiroDestCnpj === null) primeiroDestCnpj = destCnpj;
+        else if (destCnpj !== primeiroDestCnpj) {
+          avisos.push(`${arq.name}: CNPJ do destinatário diferente dos demais XMLs deste envio — confira se não misturou unidades (matriz/filial).`);
+        }
+      }
 
       const existente = await getDoc(docEmpresa("notas", id));
       if (existente.exists() &&
@@ -87,6 +111,7 @@ async function importar(e) {
         chaveAcesso: nota.chaveAcesso, numero: nota.numero, serie: nota.serie,
         dataEmissao: nota.dataEmissao, valorTotal: nota.valorTotal,
         emitenteNome: nota.emitente.nome, emitenteCnpj: nota.emitente.cnpj, emitenteCrt: nota.emitente.crt,
+        destCnpj, destNome: nota.destinatario?.nome || "",
         itens, status: "pendente",
       };
       await setDoc(docEmpresa("notas", id), { ...registro, criadoEm: serverTimestamp() });
