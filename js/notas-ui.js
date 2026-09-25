@@ -2,7 +2,7 @@
 // Usado pela Conferência e pelos XML arquivados.
 import { getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp } from "./firebase-init.js";
 import { CLASSIFICACOES, CST_ENTRADA, cfopEntradaSugerido, cstEntradaSugerido, chaveProduto } from "./regras.js";
-import { gerarXmlAjustado, gerarPdf, baixarArquivo } from "./exportacao.js";
+import { gerarXmlAjustado, gerarPdf, baixarArquivo, gerarZipXmls } from "./exportacao.js";
 import {
   estado, ehAdmin, docEmpresa, esc, moeda, formatarCnpj, competenciaDe, rotuloCompetencia, valorNota, ICONES,
 } from "./estado.js";
@@ -43,11 +43,12 @@ function htmlItem(i, idx) {
   </tr>`;
 }
 
-function htmlNota(n, abertas) {
+function htmlNota(n, abertas, selecionadas) {
   const pendentes = n.itens.filter((i) => !i.revisado).length;
   const qtd = n.itens.length;
   return `<details class="nota" data-id="${esc(n.id)}" ${abertas.has(n.id) ? "open" : ""}>
     <summary>
+      <label class="chk-nota" onclick="event.stopPropagation()"><input type="checkbox" data-sel="${esc(n.id)}" ${selecionadas.has(n.id) ? "checked" : ""} aria-label="Selecionar NF ${esc(n.numero)}"></label>
       <span class="nota-titulo"><b>NF ${esc(n.numero)}</b> — ${esc(n.emitenteNome)}</span>
       <span class="nota-meta">${n.destNome ? `${esc(n.destNome)} · ` : ""}${rotuloCompetencia(competenciaDe(n))} · ${qtd} ${qtd === 1 ? "item" : "itens"} · ${moeda(valorNota(n))} · ${pendentes} a revisar</span>
       <span class="badge ${n.status}">${n.status === "revisada" ? "Revisada" : "Pendente"}</span>
@@ -69,7 +70,7 @@ function htmlNota(n, abertas) {
 }
 
 // Agrupa as notas da página por fornecedor: caixa do fornecedor > caixas das notas > itens
-function htmlPorFornecedor(notas, abertas, fornAberto, prefixo = "") {
+function htmlPorFornecedor(notas, abertas, fornAberto, prefixo = "", selecionadas) {
   const grupos = new Map();
   for (const n of notas) {
     const chave = n.emitenteCnpj || n.emitenteNome;
@@ -84,7 +85,7 @@ function htmlPorFornecedor(notas, abertas, fornAberto, prefixo = "") {
         <span class="forn-titulo"><b>${esc(lista[0].emitenteNome)}</b><small>${esc(formatarCnpj(lista[0].emitenteCnpj))}</small></span>
         <span class="nota-meta">${lista.length} ${lista.length === 1 ? "nota" : "notas"} · ${moeda(total)} · ${pendentes} item(ns) a revisar</span>
       </summary>
-      <div class="forn-notas">${lista.map((n) => htmlNota(n, abertas)).join("")}</div>
+      <div class="forn-notas">${lista.map((n) => htmlNota(n, abertas, selecionadas)).join("")}</div>
     </details>`;
   }).join("");
 }
@@ -135,18 +136,46 @@ async function excluirNota(nota) {
   return true;
 }
 
+async function excluirNotas(notas) {
+  if (!confirm(`Excluir ${notas.length} nota(s) selecionada(s)?\nO XML e a revisão de cada uma serão apagados e não dá para desfazer.`)) return false;
+  await Promise.all(notas.flatMap((n) => [deleteDoc(docEmpresa("notas", n.id)), deleteDoc(docEmpresa("xmls", n.id))]));
+  const idsExcluidos = new Set(notas.map((n) => n.id));
+  estado.notas = estado.notas.filter((n) => !idsExcluidos.has(n.id));
+  idsExcluidos.forEach((id) => estado.sessao.delete(id));
+  return true;
+}
+
 /**
  * Cria uma lista paginada (20 notas por página) dentro de `raiz`.
  * obter(): devolve as notas já filtradas/ordenadas. agrupar: título por competência.
+ * vazio: texto (ou função que devolve o texto) mostrado quando não há notas.
+ * zipNomeSelecionados: nome do .zip gerado ao baixar as notas marcadas.
  */
-export function criarLista({ raiz, paginacao, obter, vazio, agrupar = false, porFornecedor = false, fornecedoresAbertos = true }) {
+export function criarLista({
+  raiz, paginacao, obter, vazio, agrupar = false, porFornecedor = false, fornecedoresAbertos = true,
+  zipNomeSelecionados = "xmls-selecionados.zip",
+}) {
   let pagina = 0;
   let visiveis = [];
-  const abertas = new Set();   // notas com a caixa aberta
+  const abertas = new Set();      // notas com a caixa aberta
+  const selecionadas = new Set(); // ids marcados na caixa de seleção (para baixar/excluir em lote)
   // fornecedores que você abriu/fechou em relação ao padrão (aberto na Conferência, fechado nos arquivados)
   const fornAlterados = new Set();
   const fornAberto = (chave) => fornecedoresAbertos !== fornAlterados.has(chave);
   const acharNota = (el) => estado.notas.find((n) => n.id === el.closest("details").dataset.id);
+  const textoVazio = () => (typeof vazio === "function" ? vazio() : vazio);
+
+  function htmlBarraSelecao() {
+    if (!visiveis.length) return "";
+    const n = selecionadas.size;
+    const todasMarcadas = visiveis.every((x) => selecionadas.has(x.id));
+    return `<div class="barra barra-selecao">
+      <label><input type="checkbox" data-marcar-todas ${todasMarcadas ? "checked" : ""}> Selecionar todas desta página</label>
+      <span class="nota-meta">${n} selecionada(s)</span>
+      <button type="button" data-lote="zip" class="sec" ${n ? "" : "disabled"}>Baixar selecionadas (.zip)</button>
+      ${ehAdmin() ? `<button type="button" data-lote="excluir" class="perigo" ${n ? "" : "disabled"}>Excluir selecionadas</button>` : ""}
+    </div>`;
+  }
 
   function render(zerar = false) {
     if (zerar) pagina = 0;
@@ -154,6 +183,7 @@ export function criarLista({ raiz, paginacao, obter, vazio, agrupar = false, por
     const totalPag = Math.max(1, Math.ceil(lista.length / POR_PAGINA));
     pagina = Math.min(pagina, totalPag - 1);
     visiveis = lista.slice(pagina * POR_PAGINA, (pagina + 1) * POR_PAGINA);
+    for (const id of [...selecionadas]) if (!estado.notas.some((n) => n.id === id)) selecionadas.delete(id);
 
     let html = "";
     let comp = null;
@@ -169,17 +199,17 @@ export function criarLista({ raiz, paginacao, obter, vazio, agrupar = false, por
         if (!porComp.has(c)) porComp.set(c, []);
         porComp.get(c).push(n);
       }
-      for (const [c, doMes] of porComp) html += cabecalho(c) + htmlPorFornecedor(doMes, abertas, fornAberto, c + "|");
-    } else if (porFornecedor) html = htmlPorFornecedor(visiveis, abertas, fornAberto);
+      for (const [c, doMes] of porComp) html += cabecalho(c) + htmlPorFornecedor(doMes, abertas, fornAberto, c + "|", selecionadas);
+    } else if (porFornecedor) html = htmlPorFornecedor(visiveis, abertas, fornAberto, "", selecionadas);
     else for (const n of visiveis) {
       if (agrupar && competenciaDe(n) !== comp) {
         comp = competenciaDe(n);
         const doMes = lista.filter((x) => competenciaDe(x) === comp);
         html += `<h4 class="grupo">${rotuloCompetencia(comp)} <small>${doMes.length} XML(s) · ${moeda(doMes.reduce((s, x) => s + valorNota(x), 0))}</small></h4>`;
       }
-      html += htmlNota(n, abertas);
+      html += htmlNota(n, abertas, selecionadas);
     }
-    raiz.innerHTML = html || `<p class="vazio">${vazio}</p>`;
+    raiz.innerHTML = htmlBarraSelecao() + (html || `<p class="vazio">${esc(textoVazio())}</p>`);
     paginacao.innerHTML = `
       <button data-pag="-1" class="sec" ${pagina === 0 ? "disabled" : ""}>Anterior</button>
       <span>Página ${pagina + 1} de ${totalPag} · ${lista.length} nota(s)</span>
@@ -194,7 +224,7 @@ export function criarLista({ raiz, paginacao, obter, vazio, agrupar = false, por
 
   function renderNota(nota) {
     const el = raiz.querySelector(`details[data-id="${CSS.escape(nota.id)}"]`);
-    if (el) el.outerHTML = htmlNota(nota, abertas);
+    if (el) el.outerHTML = htmlNota(nota, abertas, selecionadas);
   }
 
   paginacao.addEventListener("click", (e) => {
@@ -214,6 +244,18 @@ export function criarLista({ raiz, paginacao, obter, vazio, agrupar = false, por
   }, true);
 
   raiz.addEventListener("change", (e) => {
+    if (e.target.matches("input[data-sel]")) {
+      const id = e.target.dataset.sel;
+      if (e.target.checked) selecionadas.add(id); else selecionadas.delete(id);
+      render();
+      return;
+    }
+    if (e.target.matches("input[data-marcar-todas]")) {
+      if (e.target.checked) visiveis.forEach((n) => selecionadas.add(n.id));
+      else visiveis.forEach((n) => selecionadas.delete(n.id));
+      render();
+      return;
+    }
     const campo = e.target.dataset.campo;
     if (!campo) return;
     const det = e.target.closest("details");
@@ -248,6 +290,27 @@ export function criarLista({ raiz, paginacao, obter, vazio, agrupar = false, por
   });
 
   raiz.addEventListener("click", async (e) => {
+    const loteBtn = e.target.closest("button[data-lote]");
+    if (loteBtn) {
+      const notas = estado.notas.filter((n) => selecionadas.has(n.id));
+      if (!notas.length) return;
+      const original = loteBtn.textContent;
+      loteBtn.disabled = true;
+      try {
+        if (loteBtn.dataset.lote === "zip") {
+          await gerarZipXmls(notas, zipNomeSelecionados, (feito, total) => { loteBtn.textContent = `Baixando ${feito}/${total}...`; });
+        } else if (loteBtn.dataset.lote === "excluir") {
+          if (await excluirNotas(notas)) { notas.forEach((n) => selecionadas.delete(n.id)); render(); }
+        }
+      } catch (err) {
+        alert("Erro: " + err.message);
+      } finally {
+        loteBtn.textContent = original;
+        loteBtn.disabled = false;
+      }
+      return;
+    }
+
     const btn = e.target.closest("button[data-acao]");
     if (!btn) return;
     e.preventDefault(); // não deixa o clique abrir/fechar a caixa
