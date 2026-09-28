@@ -94,7 +94,7 @@ async function entrarNaEmpresa(emp) {
   try { localStorage.setItem("ultimaEmpresa", emp.id); } catch (_) { /* ignora */ }
   $("marca-empresa").textContent = emp.nome;
   $("banner-empresa").textContent = emp.nome;
-  $("btn-trocar-empresa").classList.toggle("oculto", empresasPermitidas().length < 2);
+  $("btn-trocar-empresa").classList.remove("oculto");
   mostrar("shell");
   irPara("conferencia");
   try {
