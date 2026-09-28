@@ -3,7 +3,19 @@
 // Ponto de partida (Lucro Real, PIS/COFINS não cumulativo). Não substitui a
 // validação do contador — ajuste as listas abaixo ao dia a dia da empresa.
 
-export const CLASSIFICACOES = ["industrialização", "comércio", "uso e consumo", "ativo imobilizado"];
+export const CLASSIFICACOES = [
+  "industrialização", "comércio", "uso e consumo", "ativo imobilizado",
+  "cesta básica", "uniforme", "combustível c/ retenção", "combustível s/ retenção", "energia elétrica",
+];
+
+// Classificações com CFOP e CST de entrada FIXOS (não dependem do CFOP/CST do fornecedor).
+const FIXAS = {
+  "cesta básica":            { cfop: "1949", cst: "98", motivo: "Cesta básica: CFOP 1949 / CST 98." },
+  "uniforme":                { cfop: "1949", cst: "98", motivo: "Uniforme: CFOP 1949 / CST 98." },
+  "combustível c/ retenção": { cfop: "1407", cst: "98", motivo: "Combustível com retenção (ST): CFOP 1407 / CST 98." },
+  "combustível s/ retenção": { cfop: "1653", cst: "98", motivo: "Combustível sem retenção: CFOP 1653 / CST 98." },
+  "energia elétrica":        { cfop: "1252", cst: "50", motivo: "Energia elétrica: CFOP 1252 / CST 50." },
+};
 
 // CST de PIS/COFINS válidos para operações de ENTRADA (Tabela 4.3.4)
 export const CST_ENTRADA = [
@@ -15,7 +27,8 @@ export const CST_ENTRADA = [
 const norm = (s) => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
 // ---------- 1) Classificação ----------
-const USO_CONSUMO = /\b(container|conteiner|balde|lixeira|vassoura|rodo|detergente|desinfetante|sabao|esponja|pano de|luva|touca|papel toalha|limpeza|uniforme|avental|toner|lampada)/;
+const USO_CONSUMO = /\b(container|conteiner|balde|lixeira|vassoura|rodo|detergente|desinfetante|sabao|esponja|pano de|luva|touca|papel toalha|limpeza|avental|toner|lampada)/;
+const UNIFORME = /\b(uniforme|camisa polo|camiseta|bone|jaleco|dolma)/;
 const ATIVO = /\b(fogao|fritadeira|chapeira|forno|freezer|geladeira|refrigerador|balanca|coifa|exaustor|maquina|equipamento|estufa|camara fria|moedor)/;
 
 const NCM_REVENDA = ["2009", "2201", "2202", "2203", "2208"]; // sucos, água, refri, cerveja, destilados
@@ -39,6 +52,7 @@ const CFOP_FINAL = {
 export function classificarItem({ descricao, ncm, cfop }) {
   const d = norm(descricao);
   const n4 = (ncm || "").slice(0, 4);
+  if (UNIFORME.test(d)) return { classificacao: "uniforme", motivo: "Descrição sugere uniforme." };
   if (USO_CONSUMO.test(d)) return { classificacao: "uso e consumo", motivo: "Descrição sugere material de uso e consumo." };
   if (ATIVO.test(d)) return { classificacao: "ativo imobilizado", motivo: "Descrição sugere equipamento/bem durável." };
   if (NCM_REVENDA.includes(n4)) return { classificacao: "comércio", motivo: "NCM de bebida pronta para revenda." };
@@ -61,6 +75,7 @@ const PREFIXO_ENTRADA = { "5": "1", "6": "2", "7": "3", "1": "1", "2": "2", "3":
 const FINAL_ST = ["401", "402", "403", "404", "405"];
 
 export function cfopEntradaSugerido(cfopOrigem, classificacao) {
+  if (FIXAS[classificacao]) return FIXAS[classificacao].cfop;
   const base = CFOP_ENTRADA_BASE[classificacao];
   const prefixo = PREFIXO_ENTRADA[(cfopOrigem || "")[0]];
   if (!base || !prefixo || cfopOrigem.length !== 4) return "";
@@ -81,6 +96,7 @@ const CORRESP_ORIGEM = {
 
 export function cstEntradaSugerido(classificacao, ncm, cstOrigem) {
   if (!classificacao) return { cst: "", motivo: "Sem classificação — defina para sugerir o CST." };
+  if (FIXAS[classificacao]) return { cst: FIXAS[classificacao].cst, motivo: FIXAS[classificacao].motivo };
   const corresp = CORRESP_ORIGEM[cstOrigem];
   if (corresp) return { cst: corresp[0], motivo: corresp[1] };
   if (classificacao === "uso e consumo") {
