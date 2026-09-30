@@ -26,12 +26,33 @@ export const CST_ENTRADA = [
 
 const norm = (s) => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
+// ---------- 0) Substituição Tributária (ICMS) ----------
+// CST do ICMS (regime normal) que indicam cobrança por ST: 10, 30, 60, 70.
+// CSOSN (Simples Nacional) equivalentes: 201, 202, 203, 500.
+// Isso é bem mais confiável do que "chutar" pelo final do CFOP do fornecedor,
+// porque muitos emitentes usam CFOP "normal" (5102) mesmo em item com ST.
+const CST_ICMS_ST = ["10", "30", "60", "70"];
+const CSOSN_ICMS_ST = ["201", "202", "203", "500"];
+function temSubstituicaoTributaria(cstIcms, csosnIcms, cfopOrigem) {
+  if (cstIcms && CST_ICMS_ST.includes(cstIcms)) return true;
+  if (csosnIcms && CSOSN_ICMS_ST.includes(csosnIcms)) return true;
+  // sem CST/CSOSN de ICMS disponível (XML antigo, ou item sem essa info):
+  // cai de volta no critério antigo, só como último recurso.
+  if (!cstIcms && !csosnIcms) return FINAL_ST.includes((cfopOrigem || "").slice(1));
+  return false;
+}
+
 // ---------- 1) Classificação ----------
 const USO_CONSUMO = /\b(container|conteiner|balde|lixeira|vassoura|rodo|detergente|desinfetante|sabao|esponja|pano de|luva|touca|papel toalha|limpeza|avental|toner|lampada)/;
 const UNIFORME = /\b(uniforme|camisa polo|camiseta|bone|jaleco|dolma)/;
 const ATIVO = /\b(fogao|fritadeira|chapeira|forno|freezer|geladeira|refrigerador|balanca|coifa|exaustor|maquina|equipamento|estufa|camara fria|moedor)/;
 
 const NCM_REVENDA = ["2009", "2201", "2202", "2203", "2208"]; // sucos, água, refri, cerveja, destilados
+// Embalagens (sacos, potes, garrafas). O uso real muda conforme a empresa:
+// - Hamburgueria: embala o pedido pronto no delivery/balcão -> não compõe um
+//   produto industrializado por ela -> uso e consumo.
+// - Indústria alimentícia: embala o produto que ELA fabrica para vender ->
+//   insumo de embalagem -> industrialização (com direito a crédito).
 const NCM_EMBALAGEM = ["4819", "3923"];
 const NCM_INSUMO = [
   "0201","0202","0203","0206","0207","0210",           // carnes
@@ -49,7 +70,7 @@ const CFOP_FINAL = {
   "551": "ativo imobilizado", "406": "ativo imobilizado",
 };
 
-export function classificarItem({ descricao, ncm, cfop }) {
+export function classificarItem({ descricao, ncm, cfop, empresaId }) {
   const d = norm(descricao);
   const n4 = (ncm || "").slice(0, 4);
   if (UNIFORME.test(d)) return { classificacao: "uniforme", motivo: "Descrição sugere uniforme." };
@@ -57,7 +78,9 @@ export function classificarItem({ descricao, ncm, cfop }) {
   if (ATIVO.test(d)) return { classificacao: "ativo imobilizado", motivo: "Descrição sugere equipamento/bem durável." };
   if (NCM_REVENDA.includes(n4)) return { classificacao: "comércio", motivo: "NCM de bebida pronta para revenda." };
   if (NCM_INSUMO.includes(n4)) return { classificacao: "industrialização", motivo: "NCM de matéria-prima/insumo de produção." };
-  if (NCM_EMBALAGEM.includes(n4)) return { classificacao: "industrialização", motivo: "NCM de embalagem." };
+  if (NCM_EMBALAGEM.includes(n4)) {
+    return { classificacao: "industrialização", motivo: "NCM de embalagem — compõe o produto final entregue ao cliente." };
+  }
   const porCfop = CFOP_FINAL[(cfop || "").slice(1)];
   if (porCfop) return { classificacao: porCfop, motivo: "Classificado pelo CFOP de origem." };
   return { classificacao: "", motivo: "Não foi possível classificar automaticamente — definir manualmente." };
@@ -74,12 +97,16 @@ const CFOP_ENTRADA_BASE = {
 const PREFIXO_ENTRADA = { "5": "1", "6": "2", "7": "3", "1": "1", "2": "2", "3": "3" };
 const FINAL_ST = ["401", "402", "403", "404", "405"];
 
-export function cfopEntradaSugerido(cfopOrigem, classificacao) {
-  if (FIXAS[classificacao]) return FIXAS[classificacao].cfop;
+export function cfopEntradaSugerido(cfopOrigem, classificacao, cstIcmsOrigem, csosnIcmsOrigem) {
+  if (FIXAS[classificacao]) {
+    // Classificações fixas: 1xxx para compra dentro do estado, 2xxx quando o CFOP do fornecedor é 6xxx (interestadual).
+    const fixo = FIXAS[classificacao].cfop;
+    return PREFIXO_ENTRADA[(cfopOrigem || "")[0]] === "2" ? "2" + fixo.slice(1) : fixo;
+  }
   const base = CFOP_ENTRADA_BASE[classificacao];
   const prefixo = PREFIXO_ENTRADA[(cfopOrigem || "")[0]];
   if (!base || !prefixo || cfopOrigem.length !== 4) return "";
-  const st = FINAL_ST.includes(cfopOrigem.slice(1));
+  const st = temSubstituicaoTributaria(cstIcmsOrigem, csosnIcmsOrigem, cfopOrigem);
   return prefixo + base[st ? 1 : 0];
 }
 
@@ -109,6 +136,76 @@ export function cstEntradaSugerido(classificacao, ncm, cstOrigem) {
     return { cst: "70", motivo: "Fornecedor informou monofásico (04): revenda sem direito a crédito." };
   }
   return { cst: "50", motivo: "Regime não cumulativo: compra com direito a crédito vinculado a receita tributada." };
+}
+
+// ---------- 3b) CST de IPI (conferência) ----------
+// O crédito de IPI só cabe a estabelecimento industrial ou equiparado a
+// industrial. Para a maioria das compras (hamburgueria e itens que não
+// entram em processo industrial da indústria alimentícia), não há
+// aproveitamento de crédito — isso aqui é uma CONFERÊNCIA do que o
+// fornecedor informou, sugerindo o CST de entrada correspondente, e não
+// deve ser lido como "sempre há direito a crédito".
+export const CST_IPI_ENTRADA = ["00", "01", "02", "03", "04", "05", "49"];
+
+// CST de IPI informado pelo fornecedor na SAÍDA (50-55, 99) -> CST de ENTRADA correspondente
+const CORRESP_IPI_ORIGEM = {
+  "50": ["00", "Fornecedor tributou o IPI (50): entrada com recuperação de crédito — só aplicável se a empresa for industrial/equiparada."],
+  "51": ["01", "Fornecedor com alíquota zero (51): entrada tributada à alíquota zero."],
+  "52": ["02", "Fornecedor com isenção (52): entrada isenta."],
+  "53": ["03", "Fornecedor com não incidência (53): entrada não-tributada."],
+  "54": ["04", "Fornecedor com imunidade (54): entrada imune."],
+  "55": ["05", "Fornecedor com suspensão (55): entrada com suspensão."],
+  "99": ["49", "Fornecedor informou outras saídas de IPI (99): entrada classificada como outras entradas."],
+};
+
+export function cstIpiEntradaSugerido(cstIpiOrigem) {
+  if (!cstIpiOrigem) {
+    return { cst: "49", motivo: "Nota sem tributação de IPI informada pelo fornecedor (comum quando ele não é contribuinte do IPI) — registrada como outras entradas." };
+  }
+  const corresp = CORRESP_IPI_ORIGEM[cstIpiOrigem];
+  if (corresp) return { cst: corresp[0], motivo: corresp[1] };
+  return { cst: "49", motivo: `CST de IPI do fornecedor (${cstIpiOrigem}) fora do padrão esperado — confirmar com o contador.` };
+}
+
+// ---------- 3c) ICMS de entrada (SOMENTE hamburgueria) ----------
+// A indústria alimentícia não usa estas colunas/regras.
+// Identifica pelo ramo cadastrado em estado.js (ex.: "Hamburgueria") ou pelo id da empresa (ex.: "just-burger").
+const RAMOS_COM_ICMS = ["hamburguer"];
+const IDS_COM_ICMS = ["just-burger"];
+export function empresaUsaIcms(empresa) {
+  if (!empresa) return false;
+  if (IDS_COM_ICMS.includes(empresa.id)) return true;
+  const ramo = norm(empresa.ramo);
+  return RAMOS_COM_ICMS.some((p) => ramo.includes(p));
+}
+
+// CST de ICMS (Tabela B, 2 dígitos). O CST completo tem 3 posições: origem da mercadoria + CST.
+export const CST_ICMS_BASE = ["00", "10", "20", "30", "40", "41", "50", "51", "60", "70", "90"];
+export const cstIcmsValido = (v) => /^[0-8]\d{2}$/.test(v || "") && CST_ICMS_BASE.includes(v.slice(1));
+
+// CFOP de entrada -> CST de ICMS (2 dígitos). Sem crédito de ICMS: vai em "valor contábil" e "outras".
+const ICMS_POR_CFOP = {
+  "1556": "90", "2556": "90",                 // uso e consumo
+  "1407": "60", "2407": "60",                 // uso e consumo com ST
+  "1551": "90", "2551": "90",                 // ativo imobilizado
+  "1406": "60", "2406": "60",                 // ativo imobilizado com ST
+  "1949": "90", "2949": "90",                 // uniforme / cesta básica
+  "1401": "60", "2401": "60", "1403": "60", "2403": "60", // compra p/ industrialização/comércio com ST
+};
+// CFOP em que vale o ICMS DESTACADO na NF (há crédito): o CST de entrada espelha o do fornecedor (ex.: 00, 20).
+const CFOP_ICMS_DESTACADO = ["1102", "2102", "2202"];
+
+export function cstIcmsEntradaSugerido(cfopEntrada, origem, cstIcmsOrigem) {
+  const o = /^[0-8]$/.test(origem || "") ? origem : "0";
+  const fixo = ICMS_POR_CFOP[cfopEntrada];
+  if (fixo) return { cst: o + fixo, motivo: `ICMS: CFOP ${cfopEntrada} → CST ${o}${fixo} (sem crédito; valor contábil e outras).` };
+  if (CFOP_ICMS_DESTACADO.includes(cfopEntrada)) {
+    if (CST_ICMS_BASE.includes(cstIcmsOrigem)) {
+      return { cst: o + cstIcmsOrigem, motivo: `ICMS: CFOP ${cfopEntrada} considera o ICMS destacado na NF; CST ${o}${cstIcmsOrigem} conforme o fornecedor.` };
+    }
+    return { cst: "", motivo: `ICMS: CFOP ${cfopEntrada} usa o ICMS destacado, mas a NF não traz CST de ICMS — definir manualmente.` };
+  }
+  return { cst: "", motivo: "ICMS: CFOP de entrada sem regra cadastrada — definir manualmente." };
 }
 
 // ---------- 4) Cadastro de produtos ----------
