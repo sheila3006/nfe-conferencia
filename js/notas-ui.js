@@ -1,7 +1,11 @@
 // notas-ui.js — cartão de nota (caixa suspensa), edição na tela, ações e paginação.
 // Usado pela Conferência e pelos XML arquivados.
 import { getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp } from "./firebase-init.js";
-import { CLASSIFICACOES, CST_ENTRADA, cfopEntradaSugerido, cstEntradaSugerido, chaveProduto } from "./regras.js";
+import {
+  CLASSIFICACOES, CST_ENTRADA, CST_IPI_ENTRADA, cfopEntradaSugerido, cstEntradaSugerido, cstIcmsEntradaSugerido,
+  cstIcmsValido, empresaUsaIcms, chaveProduto,
+} from "./regras.js";
+import { conferirTotalNota, resumoNota, basePisCofinsItem, livroIcmsItem } from "./valores.js";
 import { gerarXmlAjustado, gerarPdf, baixarArquivo, gerarZipXmls } from "./exportacao.js";
 import {
   estado, ehAdmin, docEmpresa, esc, moeda, formatarCnpj, competenciaDe, rotuloCompetencia, valorNota, ICONES,
@@ -13,10 +17,19 @@ const validadores = {
   cfopEntrada: (v) => /^[123]\d{3}$/.test(v),
   cstPis: (v) => CST_ENTRADA.includes(v),
   cstCofins: (v) => CST_ENTRADA.includes(v),
+  cstIcmsEntrada: (v) => !empresaUsaIcms(estado.empresa) || cstIcmsValido(v), // ICMS: só hamburgueria
+  cstIpi: (v) => !v || CST_IPI_ENTRADA.includes(v),
 };
 const itemValido = (i) =>
   CLASSIFICACOES.includes(i.classificacao) &&
-  validadores.cfopEntrada(i.cfopEntrada) && validadores.cstPis(i.cstPis) && validadores.cstCofins(i.cstCofins);
+  validadores.cfopEntrada(i.cfopEntrada) && validadores.cstPis(i.cstPis) && validadores.cstCofins(i.cstCofins) &&
+  validadores.cstIcmsEntrada(i.cstIcmsEntrada) && validadores.cstIpi(i.cstIpi);
+
+function recalcularIcms(item) {
+  const s = cstIcmsEntradaSugerido(item.cfopEntrada, item.origIcms, item.cstIcmsOrigem);
+  item.cstIcmsEntrada = s.cst;
+  item.motivoIcms = s.motivo;
+}
 
 function selo(i) {
   if (i.revisado) return '<span class="selo ok">Revisado</span>';
@@ -28,9 +41,14 @@ function selo(i) {
 function htmlItem(i, idx) {
   const classe = i.revisado ? "" : !i.classificacao ? "sem-class" : i.origem === "sugestao" ? "sugestao" : "";
   const inv = (campo) => (validadores[campo](i[campo]) ? "" : "invalido");
-  return `<tr data-idx="${idx}" class="${classe}" title="${esc(i.motivo)}">
+  const tituloIpi = i.motivoIpi ? ` | IPI: ${i.motivoIpi}` : "";
+  const icms = empresaUsaIcms(estado.empresa);
+  const tituloIcms = icms && i.motivoIcms ? ` | ${i.motivoIcms}` : "";
+  const livro = icms ? livroIcmsItem(i) : null;
+  const val = (v) => (v == null ? "—" : moeda(v));
+  return `<tr data-idx="${idx}" class="${classe}" title="${esc((i.motivo || "") + tituloIpi + tituloIcms)}">
     <td>${esc(i.numeroItem)}</td>
-    <td class="desc">${esc(i.descricao)}<small>NCM ${esc(i.ncm)} · CST orig. ${esc(i.cstPisOrigem)}/${esc(i.cstCofinsOrigem)}</small></td>
+    <td class="desc">${esc(i.descricao)}<small>NCM ${esc(i.ncm)} · CST PIS/COFINS orig. ${esc(i.cstPisOrigem)}/${esc(i.cstCofinsOrigem)}</small></td>
     <td>${esc(i.cfopOrigem)}</td>
     <td><select data-campo="classificacao">
       <option value="">— escolher —</option>
@@ -39,11 +57,46 @@ function htmlItem(i, idx) {
     <td><input data-campo="cfopEntrada" maxlength="4" value="${esc(i.cfopEntrada)}" class="${inv("cfopEntrada")}"></td>
     <td><input data-campo="cstPis" list="lista-cst" maxlength="2" value="${esc(i.cstPis)}" class="${inv("cstPis")}"></td>
     <td><input data-campo="cstCofins" list="lista-cst" maxlength="2" value="${esc(i.cstCofins)}" class="${inv("cstCofins")}"></td>
+    ${icms ? `<td>${esc(i.cstIcmsOrigem || i.csosnIcmsOrigem || "—")}</td>
+    <td><input data-campo="cstIcmsEntrada" maxlength="3" size="4" value="${esc(i.cstIcmsEntrada || "")}" class="${inv("cstIcmsEntrada")}"></td>` : ""}
+    <td>${esc(i.cstIpiOrigem || "—")}</td>
+    <td><select data-campo="cstIpi">
+      <option value="">—</option>
+      ${CST_IPI_ENTRADA.map((c) => `<option ${c === i.cstIpi ? "selected" : ""}>${c}</option>`).join("")}
+    </select></td>
+    <td>${moeda(basePisCofinsItem(i))}</td>
+    ${icms ? `<td>${val(livro.contabil)}</td><td>${val(livro.base)}</td><td>${val(livro.imposto)}</td><td>${val(livro.isentas)}</td><td>${val(livro.outras)}</td>` : ""}
     <td class="celula-selo">${selo(i)}</td>
   </tr>`;
 }
 
+// Conferência do total da NF (valor dos produtos + ICMS-ST + IPI + frete + outras - descontos), base de PIS/COFINS e livro de ICMS
+function htmlPainelValores(n) {
+  const c = conferirTotalNota(n);
+  const icms = empresaUsaIcms(estado.empresa);
+  const r = resumoNota(n, icms);
+  let html = "";
+  if (c.ok === null) {
+    html += `<span class="selo man">${esc(c.aviso)}</span>`;
+  } else {
+    const k = c.componentes;
+    const extra = (rot, v) => (v ? ` + ${rot} ${moeda(v)}` : "");
+    html += `${c.ok ? '<span class="selo ok">Valores conferem</span>' : '<span class="selo" style="background:#fde2e2;color:#9b1c1c">Divergência</span>'}
+      <small>Produtos ${moeda(k.produtos)} + ICMS-ST ${moeda(k.icmsSt)} + IPI ${moeda(k.ipi)} + frete ${moeda(k.frete)} + outras despesas ${moeda(k.outras)}${extra("seguro", k.seguro)}${extra("II", k.ii)}
+      − descontos ${moeda(k.descontos)}${k.desonerado ? ` − ICMS desonerado ${moeda(k.desonerado)}` : ""}
+      = <b>${moeda(c.calculado)}</b> · NF informada <b>${moeda(c.informado)}</b> · diferença <b>${moeda(c.diferenca)}</b></small>`;
+    if (c.divergencias.length) html += `<br><small>⚠ ${c.divergencias.map(esc).join(" · ")}</small>`;
+  }
+  html += `<br><small>Base PIS/COFINS (sem IPI, ICMS e descontos; com frete e outras despesas): <b>${moeda(r.basePisCofins)}</b></small>`;
+  if (r.livro) {
+    const l = r.livro;
+    html += `<br><small>Livro de ICMS: valor contábil <b>${moeda(l.contabil)}</b> · base <b>${moeda(l.base)}</b> · imposto <b>${moeda(l.imposto)}</b> · isentas/não trib. <b>${moeda(l.isentas)}</b> · outras <b>${moeda(l.outras)}</b></small>`;
+  }
+  return `<div class="painel-valores" style="padding:.5rem .75rem;line-height:1.7">${html}</div>`;
+}
+
 function htmlNota(n, abertas, selecionadas) {
+  const icms = empresaUsaIcms(estado.empresa);
   const pendentes = n.itens.filter((i) => !i.revisado).length;
   const qtd = n.itens.length;
   return `<details class="nota" data-id="${esc(n.id)}" ${abertas.has(n.id) ? "open" : ""}>
@@ -59,10 +112,15 @@ function htmlNota(n, abertas, selecionadas) {
         ${ehAdmin() ? `<button data-acao="excluir" class="icone perigo" title="Excluir XML" aria-label="Excluir XML">${ICONES.lixeira}</button>` : ""}
       </span>
     </summary>
+    ${htmlPainelValores(n)}
     <div class="tabela-itens">
       <table>
         <thead><tr><th>#</th><th>Item</th><th>CFOP orig.</th><th>Classificação</th>
-          <th>CFOP entrada</th><th>CST PIS</th><th>CST COFINS</th><th>Situação</th></tr></thead>
+          <th>CFOP entrada</th><th>CST PIS</th><th>CST COFINS</th>
+          ${icms ? "<th>CST ICMS orig.</th><th>CST ICMS entrada</th>" : ""}
+          <th>CST IPI orig.</th><th>CST IPI entrada</th><th>Base PIS/COFINS</th>
+          ${icms ? "<th>Valor contábil</th><th>Base ICMS</th><th>ICMS</th><th>Isentas/N. trib.</th><th>Outras</th>" : ""}
+          <th>Situação</th></tr></thead>
         <tbody>${n.itens.map(htmlItem).join("")}</tbody>
       </table>
     </div>
@@ -102,7 +160,7 @@ function marcarAlterada(nota, det) {
 async function salvarRevisao(nota) {
   const invalidos = nota.itens.filter((i) => !itemValido(i)).map((i) => i.numeroItem);
   if (invalidos.length) {
-    throw new Error(`Corrija antes de salvar — itens com classificação, CFOP ou CST inválido: ${invalidos.join(", ")}.`);
+    throw new Error(`Corrija antes de salvar — itens com classificação, CFOP ou CST (PIS/COFINS, ICMS, IPI) inválido: ${invalidos.join(", ")}.`);
   }
   nota.itens.forEach((i) => { i.revisado = true; });
   nota.status = "revisada";
@@ -270,10 +328,21 @@ export function criarLista({
     if (campo === "classificacao") {
       // trocou a classificação: recalcula CFOP e CST sugeridos (ainda dá para ajustar)
       item.classificacao = valor;
-      item.cfopEntrada = cfopEntradaSugerido(item.cfopOrigem, valor);
+      item.cfopEntrada = cfopEntradaSugerido(item.cfopOrigem, valor, item.cstIcmsOrigem, item.csosnIcmsOrigem);
       const cst = cstEntradaSugerido(valor, item.ncm, item.cstPisOrigem);
       item.cstPis = item.cstCofins = cst.cst;
       item.motivo = cst.motivo;
+      if (empresaUsaIcms(estado.empresa)) { item.icmsManual = false; recalcularIcms(item); }
+      marcarAlterada(nota, det);
+      atualizarNota(nota);
+      return;
+    }
+
+    // Hamburgueria: CFOP de entrada/CST de ICMS alteram as colunas do livro — redesenha a nota
+    if (empresaUsaIcms(estado.empresa) && (campo === "cfopEntrada" || campo === "cstIcmsEntrada")) {
+      item[campo] = valor;
+      if (campo === "cstIcmsEntrada") item.icmsManual = true;
+      else if (!item.icmsManual) recalcularIcms(item);
       marcarAlterada(nota, det);
       atualizarNota(nota);
       return;
