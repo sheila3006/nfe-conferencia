@@ -1,6 +1,8 @@
 // exportacao.js — XML ajustado, PDF de análise e download em lote (.zip).
 import { getDoc } from "./firebase-init.js";
-import { docEmpresa } from "./estado.js";
+import { estado, docEmpresa } from "./estado.js";
+import { empresaUsaIcms } from "./regras.js";
+import { conferirTotalNota, resumoNota, basePisCofinsItem, livroIcmsItem } from "./valores.js";
 
 export function baixarArquivo(conteudo, nome, tipo) {
   const url = URL.createObjectURL(new Blob([conteudo], { type: tipo }));
@@ -37,13 +39,18 @@ export function gerarXmlAjustado(xmlString, itens) {
 }
 
 const brl = (v) => (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const brlOuTraco = (v) => (v == null ? "-" : brl(v));
 const fmtData = (s) => (s ? s.slice(0, 10).split("-").reverse().join("/") : "");
 
 // Um PDF com TODAS as notas recebidas, numa única tabela (cada nota abre com
 // uma linha de destaque). Não depende de trocar de página manualmente.
+// Inclui: conferência do total da NF, base de PIS/COFINS, CST de IPI e, na
+// hamburgueria, CST de ICMS e colunas do livro (contábil/base/imposto/isentas/outras).
 export function gerarPdf(notas, nomeArquivo, titulo = "Análise de NF-e") {
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  const icms = empresaUsaIcms(estado.empresa);
+  const colunas = icms ? 18 : 12;
 
   pdf.setFontSize(14);
   pdf.text(`${titulo} - ${notas.length} nota(s)`, 30, 34);
@@ -56,25 +63,54 @@ export function gerarPdf(notas, nomeArquivo, titulo = "Análise de NF-e") {
       totais[k] = (totais[k] || 0) + (i.valorProduto || 0);
     });
     const resumo = Object.entries(totais).map(([k, v]) => `${k} ${brl(v)}`).join("  |  ");
+
+    const c = conferirTotalNota(n);
+    const r = resumoNota(n, icms);
+    let linhaValores;
+    if (c.ok === null) linhaValores = "Valores: reimporte o XML para conferir.";
+    else {
+      linhaValores = `Valores: calculado ${brl(c.calculado)} | NF ${brl(c.informado)} | diferença ${brl(c.diferenca)} - ${c.ok ? "CONFEREM" : "DIVERGÊNCIA"}`;
+      if (c.divergencias.length) linhaValores += `\n${c.divergencias.join(" | ")}`;
+    }
+    linhaValores += `\nBase PIS/COFINS: ${brl(r.basePisCofins)}`;
+    if (r.livro) {
+      const l = r.livro;
+      linhaValores += `  |  Livro ICMS: contábil ${brl(l.contabil)} | base ${brl(l.base)} | imposto ${brl(l.imposto)} | isentas ${brl(l.isentas)} | outras ${brl(l.outras)}`;
+    }
+
     corpo.push([{
-      content: `NF ${n.numero} - ${n.emitenteNome}  |  CNPJ ${n.emitenteCnpj}  |  Emissão ${fmtData(n.dataEmissao)}\nChave ${n.chaveAcesso}\nTotais: ${resumo}`,
-      colSpan: 10,
+      content: `NF ${n.numero} - ${n.emitenteNome}  |  CNPJ ${n.emitenteCnpj}  |  Emissão ${fmtData(n.dataEmissao)}\nChave ${n.chaveAcesso}\nTotais: ${resumo}\n${linhaValores}`,
+      colSpan: colunas,
       styles: { fillColor: [219, 234, 254], textColor: [15, 42, 90], fontStyle: "bold" },
     }]);
-    n.itens.forEach((i) => corpo.push([
-      i.numeroItem, i.descricao, i.ncm, i.cfopOrigem, i.classificacao || "-", i.cfopEntrada || "-",
-      `${i.cstPisOrigem} -> ${i.cstPis}`, `${i.cstCofinsOrigem} -> ${i.cstCofins}`,
-      brl(i.valorProduto), i.revisado ? "Revisado" : "Pendente",
-    ]));
+    n.itens.forEach((i) => {
+      const livro = icms ? livroIcmsItem(i) : null;
+      corpo.push([
+        i.numeroItem, i.descricao, i.ncm, i.cfopOrigem, i.classificacao || "-", i.cfopEntrada || "-",
+        `${i.cstPisOrigem} -> ${i.cstPis}`, `${i.cstCofinsOrigem} -> ${i.cstCofins}`,
+        ...(icms ? [`${i.cstIcmsOrigem || i.csosnIcmsOrigem || "-"} -> ${i.cstIcmsEntrada || "-"}`] : []),
+        `${i.cstIpiOrigem || "-"} -> ${i.cstIpi || "-"}`,
+        brl(i.valorProduto), brl(basePisCofinsItem(i)),
+        ...(icms ? [brl(livro.contabil), brlOuTraco(livro.base), brlOuTraco(livro.imposto), brlOuTraco(livro.isentas), brlOuTraco(livro.outras)] : []),
+        i.revisado ? "Revisado" : "Pendente",
+      ]);
+    });
   });
 
   pdf.autoTable({
     startY: 46,
-    margin: { left: 30, right: 30, bottom: 30 },
-    styles: { fontSize: 8, cellPadding: 3 },
+    margin: { left: 20, right: 20, bottom: 30 },
+    styles: { fontSize: icms ? 6 : 8, cellPadding: 2 },
     headStyles: { fillColor: [15, 42, 90] },
-    columnStyles: { 1: { cellWidth: 190 } },
-    head: [["Item", "Descrição", "NCM", "CFOP orig.", "Classificação", "CFOP entrada", "CST PIS (orig. -> entrada)", "CST COFINS (orig. -> entrada)", "Valor", "Situação"]],
+    columnStyles: { 1: { cellWidth: icms ? 110 : 160 } },
+    head: [[
+      "Item", "Descrição", "NCM", "CFOP orig.", "Classificação", "CFOP entrada",
+      "CST PIS (orig. -> entrada)", "CST COFINS (orig. -> entrada)",
+      ...(icms ? ["CST ICMS (orig. -> entrada)"] : []),
+      "CST IPI (orig. -> entrada)", "Valor", "Base PIS/COFINS",
+      ...(icms ? ["Valor contábil", "Base ICMS", "ICMS", "Isentas/N. trib.", "Outras"] : []),
+      "Situação",
+    ]],
     body: corpo,
   });
 
