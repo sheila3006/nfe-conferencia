@@ -18,6 +18,43 @@ function definir(pai, tag, valor) {
   if (el && valor) el.textContent = valor;
 }
 
+// Troca o CST de PIS ou COFINS de um item.
+// No leiaute da NF-e, cada grupo só aceita certos CST: <PISNT>/<COFINSNT> aceita 04 a 09,
+// <PISAliq> aceita 01-02, <PISQtde> aceita 03 e <PISOutr>/<COFINSOutr> aceita 49 e 50 a 99.
+// Os CST de entrada (50 a 99) só são válidos em <...Outr>. Se o fornecedor usou outro grupo
+// (ex.: <PISNT>), o grupo é convertido para <...Outr> (base, alíquota e valor zerados, como
+// nas operações sem destaque de PIS/COFINS), senão o sistema que importa o XML pode ignorar o CST.
+function trocarCstPisCofins(det, tag, cst) {
+  const el = det.getElementsByTagName(tag)[0];
+  if (!el || !cst) return;
+  const grupo = el.firstElementChild;
+  if (!grupo) return;
+  const nomeOutr = tag + "Outr";
+  const ehEntradaOutr = Number(cst) >= 49;
+  if (ehEntradaOutr && grupo.localName !== nomeOutr) {
+    const doc = el.ownerDocument;
+    const ns = el.namespaceURI;
+    const campos = tag === "PIS" ? ["pPIS", "vPIS"] : ["pCOFINS", "vCOFINS"];
+    const lerOuPadrao = (nome, padrao) => {
+      const n = grupo.getElementsByTagName(nome)[0];
+      return n && n.textContent.trim() ? n.textContent.trim() : padrao;
+    };
+    const novo = doc.createElementNS(ns, nomeOutr);
+    const add = (nome, valor) => {
+      const n = doc.createElementNS(ns, nome);
+      n.textContent = valor;
+      novo.appendChild(n);
+    };
+    add("CST", cst);
+    add("vBC", lerOuPadrao("vBC", "0.00"));
+    add(campos[0], lerOuPadrao(campos[0], "0.0000"));
+    add(campos[1], lerOuPadrao(campos[1], "0.00"));
+    el.replaceChild(novo, grupo);
+    return;
+  }
+  definir(el, "CST", cst);
+}
+
 // Devolve o XML original com CFOP e CST de PIS/COFINS de cada item trocados
 // pelos valores revisados. O restante do XML permanece intacto.
 export function gerarXmlAjustado(xmlString, itens) {
@@ -29,8 +66,8 @@ export function gerarXmlAjustado(xmlString, itens) {
     const item = porNumero.get(det.getAttribute("nItem"));
     if (!item) continue;
     definir(det.getElementsByTagName("prod")[0], "CFOP", item.cfopEntrada);
-    definir(det.getElementsByTagName("PIS")[0], "CST", item.cstPis);
-    definir(det.getElementsByTagName("COFINS")[0], "CST", item.cstCofins);
+    trocarCstPisCofins(det, "PIS", item.cstPis);
+    trocarCstPisCofins(det, "COFINS", item.cstCofins);
   }
 
   let saida = new XMLSerializer().serializeToString(xmlDoc);
