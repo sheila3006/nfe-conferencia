@@ -1,7 +1,7 @@
 // conferencia.js — importação de XMLs e lista das notas importadas nesta sessão.
 import { getDoc, setDoc, serverTimestamp } from "./firebase-init.js";
 import { parseNFeXml } from "./parser.js";
-import { classificarItem, cfopEntradaSugerido, cstEntradaSugerido, chaveProduto } from "./regras.js";
+import { classificarItem, cfopEntradaSugerido, cstEntradaSugerido, cstIpiEntradaSugerido, cstIcmsEntradaSugerido, empresaUsaIcms, chaveProduto } from "./regras.js";
 import { gerarPdf, gerarZipXmls } from "./exportacao.js";
 import { criarLista } from "./notas-ui.js";
 import { estado, docEmpresa, $, passaBusca } from "./estado.js";
@@ -54,25 +54,43 @@ async function montarItem(nota, item) {
   if (cad.exists()) {
     const c = cad.data();
     classificacao = c.classificacao;
-    cfopEntrada = c.cfopOrigem === item.cfop ? c.cfopEntrada : cfopEntradaSugerido(item.cfop, classificacao);
+    cfopEntrada = c.cfopOrigem === item.cfop ? c.cfopEntrada : cfopEntradaSugerido(item.cfop, classificacao, item.cstIcms, item.csosnIcms);
     cstPis = c.cstPis;
     cstCofins = c.cstCofins;
     origem = "cadastro";
     motivo = "Item já revisado anteriormente (cadastro de produtos).";
   } else {
-    const s = classificarItem(item);
+    const s = classificarItem({ ...item, empresaId: estado.empresa.id });
     classificacao = s.classificacao;
-    cfopEntrada = cfopEntradaSugerido(item.cfop, classificacao);
+    cfopEntrada = cfopEntradaSugerido(item.cfop, classificacao, item.cstIcms, item.csosnIcms);
     const cst = cstEntradaSugerido(classificacao, item.ncm, item.cstPis);
     cstPis = cstCofins = cst.cst;
     origem = "sugestao";
     motivo = `${s.motivo} ${cst.motivo}`;
   }
 
+  // Conferência de IPI: sempre recalculada a partir do que veio nesta nota
+  // (não depende do cadastro de produtos, já que o IPI é próprio de cada NF).
+  const ipi = cstIpiEntradaSugerido(item.cstIpi);
+
+  // Conferência de ICMS: só para a hamburgueria (regras por CFOP de entrada).
+  let cstIcmsEntrada = "", motivoIcms = "";
+  if (empresaUsaIcms(estado.empresa)) {
+    const ic = cstIcmsEntradaSugerido(cfopEntrada, item.origIcms, item.cstIcms);
+    cstIcmsEntrada = ic.cst;
+    motivoIcms = ic.motivo;
+  }
+
   return {
     numeroItem: item.numeroItem, codigoProduto: item.codigoProduto, descricao: item.descricao,
     ncm: item.ncm, valorProduto: item.valorProduto,
     cfopOrigem: item.cfop, cstPisOrigem: item.cstPis, cstCofinsOrigem: item.cstCofins,
+    cstIcmsOrigem: item.cstIcms, csosnIcmsOrigem: item.csosnIcms,
+    cstIpiOrigem: item.cstIpi, cstIpi: ipi.cst, motivoIpi: ipi.motivo,
+    cstIcmsEntrada, motivoIcms, origIcms: item.origIcms,
+    // valores do item (conferência do total, base de PIS/COFINS e livro de ICMS)
+    vBC: item.vBC, vICMS: item.vICMS, vICMSST: item.vICMSST, vFCPST: item.vFCPST,
+    vIPI: item.vIPI, vII: item.vII, vFrete: item.vFrete, vSeg: item.vSeg, vDesc: item.vDesc, vOutro: item.vOutro,
     classificacao, cfopEntrada, cstPis, cstCofins, origem, motivo, revisado: false,
   };
 }
@@ -113,7 +131,7 @@ async function importar(e) {
         dataEmissao: nota.dataEmissao, valorTotal: nota.valorTotal,
         emitenteNome: nota.emitente.nome, emitenteCnpj: nota.emitente.cnpj, emitenteCrt: nota.emitente.crt,
         destCnpj, destNome: nota.destinatario?.nome || "",
-        itens, status: "pendente",
+        totais: nota.totais, itens, status: "pendente",
       };
       await setDoc(docEmpresa("notas", id), { ...registro, criadoEm: serverTimestamp() });
       await setDoc(docEmpresa("xmls", id), { xml, criadoEm: serverTimestamp() });
