@@ -79,6 +79,10 @@ export function classificarItem({ descricao, ncm, cfop, empresaId }) {
   if (NCM_REVENDA.includes(n4)) return { classificacao: "comércio", motivo: "NCM de bebida pronta para revenda." };
   if (NCM_INSUMO.includes(n4)) return { classificacao: "industrialização", motivo: "NCM de matéria-prima/insumo de produção." };
   if (NCM_EMBALAGEM.includes(n4)) {
+    // Hamburgueria embala o pedido pronto (delivery/balcão): uso e consumo. Indústria: insumo de embalagem.
+    if (empresaUsaIcms({ id: empresaId })) {
+      return { classificacao: "uso e consumo", motivo: "NCM de embalagem na hamburgueria: embala o pedido pronto — uso e consumo." };
+    }
     return { classificacao: "industrialização", motivo: "NCM de embalagem — compõe o produto final entregue ao cliente." };
   }
   const porCfop = CFOP_FINAL[(cfop || "").slice(1)];
